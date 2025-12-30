@@ -4,3 +4,5 @@
 export function ExecuteCommand(arg1:string):Promise<string>;
 
 export function ExportLogs(arg1:string):Promise<void>;
+
+export function GetAppVersion():Promise<string>;

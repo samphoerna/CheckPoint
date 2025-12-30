@@ -105,7 +105,6 @@ function init() {
         header.className = 'category-header';
         header.innerHTML = `
             <div class="cat-title">
-                <span>${cat.icon}</span>
                 <span>${cat.title}</span>
             </div>
             <span class="chevron">▼</span>
@@ -168,6 +167,15 @@ function init() {
     if (runtime) {
         runtime.EventsOn("log", (msg) => appendLog(msg));
         runtime.EventsOn("done", (featureName) => handleDone(featureName));
+
+        // Fetch Version
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetAppVersion) {
+            window.go.main.App.GetAppVersion().then(ver => {
+                const verEl = document.getElementById('app-version');
+                if (verEl) verEl.textContent = ver;
+                appendLog(`System Ready (Version: ${ver})`);
+            });
+        }
     }
 }
 

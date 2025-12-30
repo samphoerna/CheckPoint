@@ -12,15 +12,19 @@ import (
 )
 
 //go:embed all:frontend/src
+//go:embed all:frontend/src
 var assets embed.FS
+
+// AppVersion is injected at build time via -ldflags "-X main.AppVersion=vX.Y.Z"
+var AppVersion = "v0.0.1"
 
 func main() {
 	// Create an instance of the app structure
-	app := NewApp()
+	app := NewApp(AppVersion)
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Mac Diagnostic Tool",
+		Title:  "CheckPoint",
 		Width:  1024,
 		Height: 768,
 		AssetServer: &assetserver.Options{

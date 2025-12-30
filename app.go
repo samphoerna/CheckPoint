@@ -14,12 +14,20 @@ import (
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx     context.Context
+	Version string
 }
 
 // NewApp creates a new App application struct
-func NewApp() *App {
-	return &App{}
+func NewApp(version string) *App {
+	return &App{
+		Version: version,
+	}
+}
+
+// GetAppVersion returns the current application version
+func (a *App) GetAppVersion() string {
+	return a.Version
 }
 
 // startup is called when the app starts. The context is saved

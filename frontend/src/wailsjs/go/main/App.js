@@ -9,3 +9,7 @@ export function ExecuteCommand(arg1) {
 export function ExportLogs(arg1) {
   return window['go']['main']['App']['ExportLogs'](arg1);
 }
+
+export function GetAppVersion() {
+  return window['go']['main']['App']['GetAppVersion']();
+}
