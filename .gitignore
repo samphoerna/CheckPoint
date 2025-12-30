@@ -1,0 +1,17 @@
+# Wails / Go
+/build/
+dist/
+bin/
+
+# Frontend
+node_modules/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# Backups
+backups/
