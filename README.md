@@ -147,7 +147,29 @@ wails dev
 
 # Production Build (Mac Universal)
 ./package_mac.sh v0.1.1
+
+### 📘 Compilation Tutorial
+
+If you want to manually build the executable files (e.g., after making code changes), follow these steps:
+
+#### 1. Windows Executable (.exe)
+**Run this command in your terminal:**
+```bash
+wails build -platform windows/amd64 -o CheckPoint.exe
 ```
+- This will create a standalone file at `build/bin/CheckPoint.exe`.
+- *Note:* You can run this command on macOS (Cross-Compilation) or directly on Windows.
+- **Silent Mode:** This build is configured to run silently (no popup window) by default due to the code configuration.
+
+#### 2. macOS Application (.app)
+**Run this command in your terminal:**
+```bash
+wails build -platform darwin/amd64 -o CheckPoint.app
+```
+- This will create the application bundle at `build/bin/CheckPoint.app`.
+
+#### 3. Locate Your Build
+After the command finishes, navigate to the `build/bin/` folder in your project directory to find your new application files.
 
 ---
 

@@ -2,7 +2,7 @@
 const categories = [
     {
         id: "network",
-        title: "NETWORK",
+        title: "Network",
         icon: "📡",
         tools: [
             "Cek IP",
@@ -14,7 +14,7 @@ const categories = [
     },
     {
         id: "application_system",
-        title: "APPLICATION / SYSTEM",
+        title: "Application / System",
         icon: "💻",
         tools: [
             "List PS Drives",
@@ -24,7 +24,7 @@ const categories = [
     },
     {
         id: "malware_antivirus",
-        title: "MALWARE / ANTI VIRUS",
+        title: "Malware / Anti Virus",
         icon: "🛡️",
         tools: [
             "Microsoft Malware Removal Tool",
@@ -33,7 +33,7 @@ const categories = [
     },
     {
         id: "remote_services",
-        title: "REMOTE SERVICES",
+        title: "Remote Services",
         icon: "🔗",
         tools: [
             "Windows Services",
@@ -46,9 +46,10 @@ const categories = [
     },
     {
         id: "clean_files",
-        title: "CLEAN FILES",
+        title: "Clean Files",
         icon: "🧹",
         tools: [
+            "Run Full Cleanup",
             "Open Temp Folder",
             "Open Trash / Recycle Bin",
             "Open Microsoft Office Temp Files"

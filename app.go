@@ -68,6 +68,10 @@ func (a *App) ExecuteCommand(feature string) string {
 		wailsRuntime.EventsEmit(a.ctx, "log", msg)
 	}
 
+	// Determine Platform
+	isMac := runtime.GOOS == "darwin"
+	isWindows := runtime.GOOS == "windows"
+
 	// Helper to run command and stream output
 	streamCommand := func(command string, args ...string) {
 		go func() {
@@ -79,11 +83,13 @@ func (a *App) ExecuteCommand(feature string) string {
 				separator, feature, startTime.Format("2006-01-02 15:04:05"), separator)
 			emitLog(header)
 
-			// Force usage of /bin/bash for shell commands if needed,
-			// but exec.Command is generally safer with direct args.
-			// For complex pipes, we might wrap in bash -c.
-
 			cmd := exec.Command(command, args...)
+
+			// SILENT EXECUTION FOR WINDOWS
+			// SILENT EXECUTION FOR WINDOWS
+			if isWindows {
+				cmd.SysProcAttr = getSysProcAttr()
+			}
 
 			// Setup pipes
 			stdout, err := cmd.StdoutPipe()
@@ -105,55 +111,23 @@ func (a *App) ExecuteCommand(feature string) string {
 				return
 			}
 
-			// Read stdout
-			scannerOut := bufio.NewScanner(stdout)
-			go func() {
-				for scannerOut.Scan() {
-					emitLog(scannerOut.Text())
-				}
-			}()
-
-			// Read stderr
-			scannerErr := bufio.NewScanner(stderr)
-			go func() {
-				for scannerErr.Scan() {
-					emitLog(fmt.Sprintf("[ERR] %s", scannerErr.Text()))
-				}
-			}()
-
-			// We need to wait for scanners? scan blocks.
-			// Actually better to run them sync or use a WaitGroup if strictly needed.
-			// But for simplicity in this constrained env, allow them to race slightly
-			// or just do them sequentially? No, sequentially matches order better if one finishes.
-			// But they are pipes.
-			// Let's stick to the previous simple loop:
-			// The previous loop did sequential read which might block if buffer full on one side.
-			// IMPORTANT: Correct way is separate goroutines for reading pipes.
-
-			// Re-implemented simple wait since we are in a single `go func` for the whole command:
-			// We can't block on Wait() until reading is done.
-			// Simple approach: just use CombinedOutput? No, we need streaming.
-			// Let's spin up two goroutines for reading.
-
-			// (Simplification for this specific request to ensure reliability without complex sync code)
-			// A trick is to use cmd.Stdout = writerWrapper, cmd.Stderr = ...
-			// But sticking to the pattern:
-
-			// We will trust the OS buffers for now or use the previous sequential read if buffers are large enough.
-			// However, to satisfy "CRITICAL ISSUE: TOOLS NOT RUNNING", let's be robust.
-			// Go routines for reading IS the robust way.
-
-			// Redo reading:
+			// Read logs concurrently
 			doneReading := make(chan bool)
+
+			// Stdout reader
 			go func() {
-				for scannerOut.Scan() {
-					emitLog(scannerOut.Text())
+				scanner := bufio.NewScanner(stdout)
+				for scanner.Scan() {
+					emitLog(scanner.Text())
 				}
 				doneReading <- true
 			}()
+
+			// Stderr reader
 			go func() {
-				for scannerErr.Scan() {
-					emitLog(fmt.Sprintf("[ERR] %s", scannerErr.Text()))
+				scanner := bufio.NewScanner(stderr)
+				for scanner.Scan() {
+					emitLog(fmt.Sprintf("[ERR] %s", scanner.Text()))
 				}
 				doneReading <- true
 			}()
@@ -171,7 +145,7 @@ func (a *App) ExecuteCommand(feature string) string {
 				emitLog("\n[OK] Process completed successfully.")
 			}
 
-			// Minimum delay for visible 0.7s
+			// Minimum delay for visible UX
 			elapsed := time.Since(startTime)
 			if elapsed < 700*time.Millisecond {
 				time.Sleep(700*time.Millisecond - elapsed)
@@ -182,9 +156,14 @@ func (a *App) ExecuteCommand(feature string) string {
 		}()
 	}
 
-	// Determine Platform (Though we assume macOS based on context,
-	// good to be safe or explicit mapping)
-	isMac := runtime.GOOS == "darwin"
+	// Helper to run PowerShell command securely and silently
+	runPowerShell := func(psCommand string) {
+		// -NoProfile: No user profile loaded
+		// -NonInteractive: No prompt
+		// -NoLogo: Hides version banner (though we are capturing output anyway)
+		// -Command: The actual code
+		streamCommand("powershell", "-NoProfile", "-NonInteractive", "-NoLogo", "-Command", psCommand)
+	}
 
 	switch feature {
 	// --- NETWORK ---
@@ -216,59 +195,159 @@ func (a *App) ExecuteCommand(feature string) string {
 		}
 
 	// --- APPLICATION / SYSTEM ---
-	case "List PS Drives": // Get-PSDrive -> df -h
-		streamCommand("df", "-h")
+	case "List PS Drives":
+		if isMac {
+			streamCommand("df", "-h")
+		} else {
+			runPowerShell("Get-PSDrive | Format-Table -AutoSize")
+		}
 
-	case "Access HKLM Registry": // HKLM: -> Defaults
-		streamCommand("defaults", "read", "NSGlobalDomain")
+	case "Access HKLM Registry":
+		if isMac {
+			streamCommand("defaults", "read", "NSGlobalDomain")
+		} else {
+			// Read keys instead of opening regedit
+			runPowerShell("Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion | Select-Object -Property ProgramFilesDir, CommonFilesDir, DevicePath")
+		}
 
-	case "Startup Registry Check": // HKLM Run -> LaunchAgents
-		streamCommand("ls", "-la", "/Library/LaunchAgents")
+	case "Startup Registry Check":
+		if isMac {
+			streamCommand("ls", "-la", "/Library/LaunchAgents")
+		} else {
+			runPowerShell("Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location | Format-Table -AutoSize")
+		}
 
 	// --- MALWARE / ANTI VIRUS ---
-	case "Microsoft Malware Removal Tool": // mrt
-		emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking...\n=====================================", feature))
-		emitLog("[INFO] MRT is Windows-only. Checking XProtect status instead...")
-		streamCommand("bash", "-c", "system_profiler SPInstallHistoryDataType | grep -A 5 \"XProtect\"")
+	case "Microsoft Malware Removal Tool":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking...\n=====================================", feature))
+			emitLog("[INFO] MRT is Windows-only. Checking XProtect status instead...")
+			streamCommand("bash", "-c", "system_profiler SPInstallHistoryDataType | grep -A 5 \"XProtect\"")
+		} else {
+			// MRT is GUI. Use Get-MpComputerStatus for status instead.
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property AntivirusEnabled,AMServiceEnabled,AntispywareEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NisEnabled,OnAccessProtectionEnabled | Format-List")
+		}
 
-	case "Check Default Antivirus Status": // Get-MpComputerStatus
-		// Using spctl or similar as proxy
-		streamCommand("spctl", "--status")
+	case "Check Default Antivirus Status":
+		if isMac {
+			streamCommand("spctl", "--status")
+		} else {
+			runPowerShell("Get-MpComputerStatus | Format-List")
+		}
 
 	// --- REMOTE SERVICES ---
-	case "Windows Services": // services.msc -> launchctl
-		streamCommand("launchctl", "list")
+	case "Windows Services":
+		if isMac {
+			streamCommand("launchctl", "list")
+		} else {
+			// Replaces services.msc
+			runPowerShell("Get-Service | Where-Object {$_.Status -eq 'Running'} | Format-Table -AutoSize")
+		}
 
-	case "Remote System Properties": // systempropertiesadvanced
-		streamCommand("system_profiler", "SPSoftwareDataType")
+	case "Remote System Properties":
+		if isMac {
+			streamCommand("system_profiler", "SPSoftwareDataType")
+		} else {
+			// Replaces systempropertiesadvanced
+			runPowerShell("Get-ComputerInfo | Select-Object CsName, OsName, WindowsVersion, OsArchitecture, BiosVersion | Format-List")
+		}
 
-	case "Device Manager (Bluetooth)": // devmgmt.msc -> bluetooth
-		streamCommand("system_profiler", "SPBluetoothDataType")
+	case "Device Manager (Bluetooth)":
+		if isMac {
+			streamCommand("system_profiler", "SPBluetoothDataType")
+		} else {
+			// Replaces devmgmt.msc for Bluetooth
+			runPowerShell("Get-PnpDevice -Class Bluetooth | Select-Object Status, Class, FriendlyName, InstanceId | Format-Table -AutoSize")
+		}
 
-	case "Registry Editor": // regedit -> open Library
-		streamCommand("open", "/Library/Preferences")
+	case "Registry Editor":
+		if isMac {
+			streamCommand("open", "/Library/Preferences")
+		} else {
+			// Cannot run silent regedit, providing info instead
+			runPowerShell("Write-Output 'Registry Editor cannot be run silently. Please use system tools if GUI access is needed.'")
+		}
 
-	case "Task Manager": // taskmgr -> Activity Monitor
-		streamCommand("open", "-a", "Activity Monitor")
+	case "Task Manager":
+		if isMac {
+			streamCommand("open", "-a", "Activity Monitor")
+		} else {
+			// Replaces taskmgr
+			runPowerShell("Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 | Format-Table -AutoSize")
+		}
 
-	case "Startup Services": // launchctl services
-		streamCommand("ls", "-la", "/Library/LaunchDaemons")
+	case "Startup Services":
+		if isMac {
+			streamCommand("ls", "-la", "/Library/LaunchDaemons")
+		} else {
+			// Check Auto start services
+			runPowerShell("Get-CimInstance Win32_Service | Where-Object StartMode -eq 'Auto' | Select-Object Name, State, StartMode, PathName | Format-Table -AutoSize")
+		}
 
 	// --- CLEAN FILES ---
-	case "Open Temp Folder": // %temp%
-		streamCommand("open", os.Getenv("TMPDIR"))
+	case "Run Full Cleanup":
+		a.performFullCleanup()
+
+	case "Open Temp Folder":
+		if isMac {
+			streamCommand("open", os.Getenv("TMPDIR"))
+		} else {
+			// Calculate size instead of opening explorer
+			runPowerShell("Get-ChildItem -Path $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List")
+		}
 
 	case "Open Trash / Recycle Bin":
-		streamCommand("open", os.Getenv("HOME")+"/.Trash")
+		if isMac {
+			streamCommand("open", os.Getenv("HOME")+"/.Trash")
+		} else {
+			// Calculate Recycle Bin size
+			runPowerShell("Get-ChildItem 'C:\\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List")
+		}
 
 	case "Open Microsoft Office Temp Files":
-		// Attempting standard path
-		path := os.Getenv("HOME") + "/Library/Containers/com.microsoft.Word/Data/Library/Preferences/AutoRecovery"
-		streamCommand("open", path)
+		if isMac {
+			path := os.Getenv("HOME") + "/Library/Containers/com.microsoft.Word/Data/Library/Preferences/AutoRecovery"
+			streamCommand("open", path)
+		} else {
+			// Check common autorecover path if it exists
+			runPowerShell("Get-ChildItem -Path \"$env:APPDATA\\Microsoft\\Word\\\" -Filter *.asd -Recurse -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table")
+		}
 
 	default:
 		return fmt.Sprintf("Unknown feature: %s", feature)
 	}
 
 	return "Request received..."
+}
+
+func (a *App) performFullCleanup() {
+	// Helper to emit log lines
+	emitLog := func(msg string) {
+		wailsRuntime.EventsEmit(a.ctx, "log", msg)
+	}
+
+	startTime := time.Now()
+	separator := "====================================="
+	header := fmt.Sprintf("%s\n[ Run Full Cleanup ]\nTime : %s\nStatus : Running...\n%s",
+		separator, startTime.Format("2006-01-02 15:04:05"), separator)
+	emitLog(header)
+
+	isWindows := runtime.GOOS == "windows"
+	isMac := runtime.GOOS == "darwin"
+
+	if isWindows {
+		cleanupWindows(emitLog)
+	} else if isMac {
+		cleanupMac(emitLog)
+	} else {
+		emitLog("[ERROR] Unsupported platform for cleanup.")
+	}
+
+	elapsed := time.Since(startTime)
+	if elapsed < 700*time.Millisecond {
+		time.Sleep(700*time.Millisecond - elapsed)
+	}
+
+	emitLog("\n[OK] Cleanup process completed.")
+	wailsRuntime.EventsEmit(a.ctx, "done", "Run Full Cleanup")
 }

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta content="width=device-width, initial-scale-1.0" name="viewport" />
+    <title>CheckPoint V0.1</title>
+    <link href="./style.css" rel="stylesheet" />
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Global Toolbar -->
+        <header class="toolbar">
+            <div class="toolbar-left">
+                <img src="./assets/logo.png" alt="Logo" class="app-logo" />
+                <div class="app-info-block">
+                    <div class="app-title-row">
+                        <span class="app-main-title">CheckPoint – Secure Device Checker</span>
+                        <span class="app-version-tag" id="app-version">V 0.1.1</span>
+                    </div>
+                    <div class="app-subtitle-row">
+                        Developed by Tim Proteksi <br>
+                        Direktorat Operasi Keamanan Siber
+                    </div>
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <button id="exportLogsBtn" class="tool-btn" title="Export Logs">Export Logs</button>
+                <button id="globalResetBtn" class="tool-btn reset-btn" title="Reset All">Reset</button>
+            </div>
+        </header>
+
+        <!-- Split Layout: Tools (Left) | Terminal (Right) -->
+        <div class="split-view">
+            <!-- Left Pane: Diagnostic Tools -->
+            <aside class="tools-pane">
+                <div class="pane-header">Scan Options</div>
+                <div id="toolsContainer" class="tools-list">
+                    <!-- Categories/Tools injected via JS -->
+                </div>
+                <div class="sidebar-footer">
+                    &copy; 2025 CheckPoint – Secure Device Checker.<br>
+                    All trademarks and product names are the property of their respective owners.
+                </div>
+            </aside>
+
+            <!-- Right Pane: Terminal Output -->
+            <section class="terminal-pane">
+                <div class="terminal-header">
+                    <span class="terminal-title">Console Output</span>
+                    <button id="clearLogsBtn" class="terminal-action">Clear</button>
+                </div>
+                <div id="logContainer" class="terminal-body">
+                    <div class="log-line system-msg">System Ready. Select a tool from the left to begin.</div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Wails Runtime Scaffolding -->
+    <script src="./wailsjs/go/main/App.js"></script>
+    <script src="./wailsjs/runtime/runtime.js"></script>
+    <script src="./main.js"></script>
+</body>
+
+</html>
