@@ -1,0 +1,24 @@
+# Binaries
+build/bin/
+*/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Wails
+frontend/dist/
+wailsjs/
+
+# Go
+go.sum
+vendor/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Backups
+backups/
+*.zip
+*.log

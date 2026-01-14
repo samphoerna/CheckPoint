@@ -16,7 +16,7 @@ import (
 var assets embed.FS
 
 // AppVersion is injected at build time via -ldflags "-X main.AppVersion=vX.Y.Z"
-var AppVersion = "v0.1.2"
+var AppVersion = "v0.1.31"
 
 func main() {
 	// Create an instance of the app structure

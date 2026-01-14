@@ -1,0 +1,21 @@
+{
+  "name": "CheckPoint",
+  "outputfilename": "CheckPoint",
+  "frontend:install": "echo 'Skipping install'",
+  "frontend:build": "echo 'Using raw assets'",
+  "frontend:dev:watcher": "echo 'Watcher disabled'",
+  "version": "2",
+  "author": {
+    "name": "Toddy Upananda",
+    "email": "toddyupananda@gmail.com"
+  },
+  "debounceMS": 100,
+  "wailsjsdir": "./frontend/src",
+  "info": {
+    "companyName": "Toddy Upananda",
+    "productName": "CheckPoint",
+    "productVersion": "0.1.1",
+    "copyright": "Copyright 2025",
+    "comments": "Secure Device Checker"
+  }
+}

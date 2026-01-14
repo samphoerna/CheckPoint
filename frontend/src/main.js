@@ -17,9 +17,14 @@ const categories = [
         title: "Application / System",
         icon: "💻",
         tools: [
+            "System Information",
+            "Check installed applications",
             "List PS Drives",
             "Access HKLM Registry",
-            "Startup Registry Check"
+            "Startup Services",
+            "Registry Check",
+            "Registry Editor",
+            "Task Manager"
         ]
     },
     {
@@ -27,8 +32,9 @@ const categories = [
         title: "Malware / Anti Virus",
         icon: "🛡️",
         tools: [
-            "Microsoft Malware Removal Tool",
-            "Check Default Antivirus Status"
+            "Security Status",
+            "Protection Health",
+            "Run Quick Scan"
         ]
     },
     {
@@ -36,12 +42,10 @@ const categories = [
         title: "Remote Services",
         icon: "🔗",
         tools: [
-            "Windows Services",
-            "Remote System Properties",
+            "Check active network service ports",
+            "Check installed browser extensions",
             "Device Manager (Bluetooth)",
-            "Registry Editor",
-            "Task Manager",
-            "Startup Services"
+            "Open Remote Access Settings"
         ]
     },
     {
@@ -52,7 +56,7 @@ const categories = [
             "Run Full Cleanup",
             "Open Temp Folder",
             "Open Trash / Recycle Bin",
-            "Open Microsoft Office Temp Files"
+            "Open Office Temp Files"
         ]
     }
 ];

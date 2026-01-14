@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"time"
 
+	"net"
+	"path/filepath"
+
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -21,7 +24,7 @@ type App struct {
 // NewApp creates a new App application struct
 func NewApp(version string) *App {
 	return &App{
-		Version: version,
+		Version: "V.0.1.33a",
 	}
 }
 
@@ -40,9 +43,13 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) ExportLogs(content string) error {
 	defaultName := fmt.Sprintf("checkpoint-log-%s.txt", time.Now().Format("20060102-150405"))
 
+	// Resolve default directory to app base dir
+	baseDir, _ := a.getAppBaseDir()
+
 	options := wailsRuntime.SaveDialogOptions{
-		DefaultFilename: defaultName,
-		Title:           "Export Logs",
+		DefaultFilename:  defaultName,
+		DefaultDirectory: baseDir,
+		Title:            "Export Logs",
 		Filters: []wailsRuntime.FileFilter{
 			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
 		},
@@ -58,6 +65,119 @@ func (a *App) ExportLogs(content string) error {
 	}
 
 	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// getAppBaseDir returns the directory where the application is running.
+// If running inside a macOS .app bundle, it returns the directory CONTAINING the .app bundle.
+// This ensures that portable functionality (like saving screenshots to flash drive) works as expected.
+func (a *App) getAppBaseDir() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
+	// Resolve symlinks
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return "", err
+	}
+
+	dir := filepath.Dir(exePath)
+
+	if runtime.GOOS == "darwin" {
+		// Typical path: /Volumes/USB/CheckPoint.app/Contents/MacOS/CheckPoint
+		// We want: /Volumes/USB/
+		// Traverse up if we are inside .app/Contents/MacOS
+		// 1. .../MacOS
+		// 2. .../Contents
+		// 3. .../CheckPoint.app
+		// 4. .../ (Target)
+		if filepath.Base(dir) == "MacOS" {
+			parent := filepath.Dir(dir) // Contents
+			if filepath.Base(parent) == "Contents" {
+				grandParent := filepath.Dir(parent) // CheckPoint.app
+				if filepath.Ext(grandParent) == ".app" {
+					return filepath.Dir(grandParent), nil
+				}
+			}
+		}
+	}
+
+	return dir, nil
+}
+
+// captureScreenshot takes a screenshot silently and saves it to a timestamped folder
+func (a *App) captureScreenshot(reason string) {
+	// 1. Disable entirely on macOS
+	if runtime.GOOS == "darwin" {
+		return
+	}
+
+	// 2. Delayed Capture (Windows) - Wait for window to be visible
+	time.Sleep(2 * time.Second)
+
+	// Root screenshot directory relative to executable (Portable)
+	baseDir, err := a.getAppBaseDir()
+	if err != nil {
+		wailsRuntime.EventsEmit(a.ctx, "log", fmt.Sprintf("[ERR] Failed to determine app location: %s. Using temp dir.", err))
+		baseDir = os.TempDir()
+	}
+
+	// Folder format: CP-SS-<Day><Month><Year> (e.g., CP-SS-08012026)
+	dateFolder := fmt.Sprintf("CP-SS-%s", time.Now().Format("02012006"))
+	screenshotDir := filepath.Join(baseDir, dateFolder)
+
+	// Attempt to create directory. If read-only (e.g. CD-ROM), fallback to temp.
+	if err := os.MkdirAll(screenshotDir, 0755); err != nil {
+		wailsRuntime.EventsEmit(a.ctx, "log", fmt.Sprintf("[WARN] Cannot write to %s (Read-only?). Falling back to Temp.", screenshotDir))
+		baseDir = os.TempDir()
+		screenshotDir = filepath.Join(baseDir, dateFolder)
+		if err := os.MkdirAll(screenshotDir, 0755); err != nil {
+			wailsRuntime.EventsEmit(a.ctx, "log", fmt.Sprintf("[ERR] Failed to create temp screenshot dir: %s", err))
+			return
+		}
+	}
+
+	// Find next sequence number
+	files, _ := os.ReadDir(screenshotDir)
+	count := len(files) + 1
+	filename := fmt.Sprintf("%03d.png", count) // 001.png
+	fullPath := filepath.Join(screenshotDir, filename)
+
+	wailsRuntime.EventsEmit(a.ctx, "log", fmt.Sprintf("[INFO] Capturing screenshot for '%s'...", reason))
+	wailsRuntime.EventsEmit(a.ctx, "log", fmt.Sprintf("[INFO] Saving to: %s", fullPath))
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		// macOS: screencapture -x (silent) -m (main monitor)
+		cmd = exec.Command("screencapture", "-x", "-m", fullPath)
+	} else {
+		// Windows: Powershell snippet to capture screen
+		// NOTE: This requires .NET (System.Windows.Forms).
+		psScript := fmt.Sprintf(`
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$Screen = [System.Windows.Forms.Screen]::PrimaryScreen
+$Width = $Screen.Bounds.Width
+$Height = $Screen.Bounds.Height
+$Left = $Screen.Bounds.Left
+$Top = $Screen.Bounds.Top
+$Bitmap = New-Object System.Drawing.Bitmap $Width, $Height
+$Graphic = [System.Drawing.Graphics]::FromImage($Bitmap)
+$Graphic.CopyFromScreen($Left, $Top, 0, 0, $Bitmap.Size)
+$Bitmap.Save('%s')
+$Graphic.Dispose()
+$Bitmap.Dispose()
+`, fullPath)
+		cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+		cmd.SysProcAttr = getSysProcAttr()
+	}
+
+	if err := cmd.Run(); err != nil {
+		wailsRuntime.EventsEmit(a.ctx, "log", fmt.Sprintf("[ERR] Screenshot failed: %s", err))
+	} else {
+		wailsRuntime.EventsEmit(a.ctx, "log", "[OK] Screenshot saved.")
+	}
 }
 
 // ExecuteCommand runs a system command based on the feature name
@@ -145,6 +265,26 @@ func (a *App) ExecuteCommand(feature string) string {
 				emitLog("\n[OK] Process completed successfully.")
 			}
 
+			// SCREENSHOT TRIGGER: If error or specific conditions met
+			// The user requested:
+			// 1. Specific popup window appears (hard to detect without keeping process open, but we can infer from "Open/Start" commands)
+			// 2. Command executes outside terminal (e.g. "open" / "start")
+			// 3. Fails to produce output (stderr) - covered by err check above
+
+			triggerScreenshot := false
+			if err != nil {
+				triggerScreenshot = true
+			}
+
+			// Hardcoded list of features that open external windows
+			if feature == "System Information" || feature == "Task Manager" || feature == "Registry Editor" || feature == "Device Manager (Bluetooth)" || feature == "Remote Access Settings" {
+				triggerScreenshot = true
+			}
+
+			if triggerScreenshot {
+				a.captureScreenshot(feature)
+			}
+
 			// Minimum delay for visible UX
 			elapsed := time.Since(startTime)
 			if elapsed < 700*time.Millisecond {
@@ -195,6 +335,22 @@ func (a *App) ExecuteCommand(feature string) string {
 		}
 
 	// --- APPLICATION / SYSTEM ---
+	case "System Information": // logic moved from Remote System Properties
+		if isMac {
+			streamCommand("system_profiler", "SPSoftwareDataType")
+			streamCommand("open", "/System/Library/PreferencePanes/Dock.prefPane") // Using Dock as generic placeholder or System Settings
+		} else {
+			runPowerShell("Get-ComputerInfo | Select-Object CsName, OsName, WindowsVersion, OsArchitecture, BiosVersion | Format-List")
+			runPowerShell("Start-Process ms-settings:about")
+		}
+
+	case "Check installed applications":
+		if isMac {
+			streamCommand("system_profiler", "SPApplicationsDataType")
+		} else {
+			runPowerShell("Get-WmiObject -Class Win32_Product | Select-Object Name, Version, Vendor, InstallDate | Format-Table -AutoSize")
+		}
+
 	case "List PS Drives":
 		if isMac {
 			streamCommand("df", "-h")
@@ -206,82 +362,179 @@ func (a *App) ExecuteCommand(feature string) string {
 		if isMac {
 			streamCommand("defaults", "read", "NSGlobalDomain")
 		} else {
-			// Read keys instead of opening regedit
 			runPowerShell("Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion | Select-Object -Property ProgramFilesDir, CommonFilesDir, DevicePath")
 		}
 
-	case "Startup Registry Check":
+	case "Startup Services": // Moved from Remote Services
+		if isMac {
+			streamCommand("ls", "-la", "/Library/LaunchDaemons")
+		} else {
+			runPowerShell("Get-CimInstance Win32_Service | Where-Object StartMode -eq 'Auto' | Select-Object Name, State, StartMode, PathName | Format-Table -AutoSize")
+		}
+
+	case "Registry Check": // Renamed from Startup Registry Check
 		if isMac {
 			streamCommand("ls", "-la", "/Library/LaunchAgents")
 		} else {
 			runPowerShell("Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location | Format-Table -AutoSize")
 		}
 
-	// --- MALWARE / ANTI VIRUS ---
-	case "Microsoft Malware Removal Tool":
+	case "Registry Editor": // Moved
 		if isMac {
-			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking...\n=====================================", feature))
-			emitLog("[INFO] MRT is Windows-only. Checking XProtect status instead...")
-			streamCommand("bash", "-c", "system_profiler SPInstallHistoryDataType | grep -A 5 \"XProtect\"")
+			streamCommand("open", "/Library/Preferences")
 		} else {
-			// MRT is GUI. Use Get-MpComputerStatus for status instead.
-			runPowerShell("Get-MpComputerStatus | Select-Object -Property AntivirusEnabled,AMServiceEnabled,AntispywareEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NisEnabled,OnAccessProtectionEnabled | Format-List")
+			runPowerShell("Write-Output 'Registry Editor cannot be run silently. Please use system tools if GUI access is needed.'")
+			runPowerShell("Start-Process regedit") // Actually open it as per request "moved... must display info... also open" logic applied to System Info, but implied for Editor too
 		}
 
-	case "Check Default Antivirus Status":
+	case "Task Manager": // Moved
 		if isMac {
-			streamCommand("spctl", "--status")
+			streamCommand("open", "-a", "Activity Monitor")
 		} else {
-			runPowerShell("Get-MpComputerStatus | Format-List")
+			runPowerShell("Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 | Format-Table -AutoSize")
+			runPowerShell("Start-Process taskmgr")
+		}
+
+	// --- MALWARE / ANTI VIRUS ---
+	// --- MALWARE / ANTI VIRUS ---
+	case "Security Status":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Checking Security Status...\n=====================================", feature))
+
+			// 3. Gatekeeper status
+			emitLog("[ Gatekeeper Status ]")
+			streamCommand("spctl", "--status")
+
+			// 4. SIP (System Integrity Protection)
+			emitLog("\n[ System Integrity Protection (SIP) ]")
+			streamCommand("csrutil", "status")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Checking Security Status...\n=====================================", feature))
+
+			// AntivirusEnabled, AMServiceEnabled
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property AntivirusEnabled,AMServiceEnabled,AntispywareEnabled | Format-List")
+
+			// Detect third-party
+			runPowerShell("Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object -Property displayName,productState | Format-List")
+		}
+
+	case "Protection Health":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Checking Protection Health...\n=====================================", feature))
+
+			// 1. XProtect status
+			emitLog("[ XProtect Status ]")
+			streamCommand("bash", "-c", "defaults read /System/Library/CoreServices/XProtect.bundle/Contents/Info.plist CFBundleShortVersionString")
+
+			// 2. MRT (Malware Removal Tool)
+			emitLog("\n[ MRT Status ]")
+			streamCommand("bash", "-c", "if [ -d \"/System/Library/CoreServices/MRT.app\" ]; then defaults read /System/Library/CoreServices/MRT.app/Contents/Info.plist CFBundleShortVersionString; else echo \"MRT not found\"; fi")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Checking Protection Health...\n=====================================", feature))
+
+			// RealTimeProtection, Updates, etc.
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated,QuickScanAge,FullScanAge | Format-List")
+		}
+
+	case "Run Quick Scan":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Persistence Inspection (Passive)\n=====================================", feature))
+
+			// 5. Optional passive inspection
+			emitLog("[INFO] Scanning LaunchAgents and LaunchDaemons for persistence indicators...")
+			emitLog("[ LaunchAgents ]")
+			streamCommand("ls", "-la", "/Library/LaunchAgents")
+			streamCommand("ls", "-la", os.Getenv("HOME")+"/Library/LaunchAgents")
+
+			emitLog("\n[ LaunchDaemons ]")
+			streamCommand("ls", "-la", "/Library/LaunchDaemons")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Initiating Quick Scan...\n=====================================", feature))
+
+			emitLog("[WARN] This will start a Windows Defender Quick Scan.")
+			// Trigger scan and stream output (Note: Start-MpScan might output to host if not job)
+			runPowerShell("Start-MpScan -ScanType QuickScan | Out-String")
 		}
 
 	// --- REMOTE SERVICES ---
-	case "Windows Services":
-		if isMac {
-			streamCommand("launchctl", "list")
-		} else {
-			// Replaces services.msc
-			runPowerShell("Get-Service | Where-Object {$_.Status -eq 'Running'} | Format-Table -AutoSize")
+	case "Check active network service ports":
+		emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking Ports...\n=====================================", feature))
+		ports := map[string]string{
+			"21":   "FTP",
+			"22":   "SSH",
+			"445":  "SMB",
+			"3389": "RDP",
 		}
 
-	case "Remote System Properties":
-		if isMac {
-			streamCommand("system_profiler", "SPSoftwareDataType")
+		found := false
+		for port, name := range ports {
+			timeout := 500 * time.Millisecond
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, timeout)
+			status := "CLOSED"
+			if err == nil {
+				conn.Close()
+				status = "OPEN"
+				found = true
+			}
+			emitLog(fmt.Sprintf("[%s] Port %s (%s)", status, port, name))
+		}
+		if !found {
+			emitLog("[INFO] No active target services found locally.")
+		}
+		wailsRuntime.EventsEmit(a.ctx, "done", feature)
+
+	case "Check installed browser extensions":
+		emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking Extensions...\n=====================================", feature))
+
+		if isWindows {
+			// Chrome
+			emitLog("\n[ Google Chrome ]")
+			chromePath := filepath.Join(os.Getenv("LOCALAPPDATA"), "Google", "Chrome", "User Data", "Default", "Extensions")
+			runPowerShell(fmt.Sprintf("Get-ChildItem -Path '%s' -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object FullName", chromePath))
+
+			// Edge
+			emitLog("\n[ Microsoft Edge ]")
+			edgePath := filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "Edge", "User Data", "Default", "Extensions")
+			runPowerShell(fmt.Sprintf("Get-ChildItem -Path '%s' -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object FullName", edgePath))
+
+			// Firefox
+			emitLog("\n[ Mozilla Firefox ]")
+			firefoxPath := filepath.Join(os.Getenv("APPDATA"), "Mozilla", "Firefox", "Profiles")
+			runPowerShell(fmt.Sprintf("Get-ChildItem -Path '%s' -Recurse -Include 'extensions.json','addons.json' -ErrorAction SilentlyContinue | Select-Object FullName", firefoxPath))
+
 		} else {
-			// Replaces systempropertiesadvanced
-			runPowerShell("Get-ComputerInfo | Select-Object CsName, OsName, WindowsVersion, OsArchitecture, BiosVersion | Format-List")
+			// Chrome
+			emitLog("\n[ Google Chrome ]")
+			home, _ := os.UserHomeDir()
+			chromePath := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Extensions")
+			streamCommand("ls", "-R", chromePath)
+
+			// Safari (Approximate - usually binary)
+			emitLog("\n[ Safari ]")
+			emitLog("[INFO] Safari Extensions are managed via App Store. Listing related .app bundles...")
+			streamCommand("mdfind", "kMDItemKind == 'Application' && kMDItemContentType == 'com.apple.safari.extension'")
+
+			// Firefox
+			emitLog("\n[ Mozilla Firefox ]")
+			firefoxPath := filepath.Join(home, "Library", "Application Support", "Firefox", "Profiles")
+			streamCommand("find", firefoxPath, "-name", "extensions.json")
 		}
 
 	case "Device Manager (Bluetooth)":
 		if isMac {
 			streamCommand("system_profiler", "SPBluetoothDataType")
 		} else {
-			// Replaces devmgmt.msc for Bluetooth
 			runPowerShell("Get-PnpDevice -Class Bluetooth | Select-Object Status, Class, FriendlyName, InstanceId | Format-Table -AutoSize")
 		}
 
-	case "Registry Editor":
+	case "Open Remote Access Settings":
 		if isMac {
-			streamCommand("open", "/Library/Preferences")
+			streamCommand("open", "/System/Library/PreferencePanes/SharingPref.prefPane")
 		} else {
-			// Cannot run silent regedit, providing info instead
-			runPowerShell("Write-Output 'Registry Editor cannot be run silently. Please use system tools if GUI access is needed.'")
-		}
-
-	case "Task Manager":
-		if isMac {
-			streamCommand("open", "-a", "Activity Monitor")
-		} else {
-			// Replaces taskmgr
-			runPowerShell("Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 | Format-Table -AutoSize")
-		}
-
-	case "Startup Services":
-		if isMac {
-			streamCommand("ls", "-la", "/Library/LaunchDaemons")
-		} else {
-			// Check Auto start services
-			runPowerShell("Get-CimInstance Win32_Service | Where-Object StartMode -eq 'Auto' | Select-Object Name, State, StartMode, PathName | Format-Table -AutoSize")
+			runPowerShell("Start systempropertiesremote")
 		}
 
 	// --- CLEAN FILES ---
@@ -292,25 +545,29 @@ func (a *App) ExecuteCommand(feature string) string {
 		if isMac {
 			streamCommand("open", os.Getenv("TMPDIR"))
 		} else {
-			// Calculate size instead of opening explorer
+			// Calculate size AND open folder
 			runPowerShell("Get-ChildItem -Path $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List")
+			runPowerShell("Start-Process explorer $env:TEMP")
 		}
 
 	case "Open Trash / Recycle Bin":
 		if isMac {
 			streamCommand("open", os.Getenv("HOME")+"/.Trash")
 		} else {
-			// Calculate Recycle Bin size
+			// Calculate Recycle Bin size AND open
 			runPowerShell("Get-ChildItem 'C:\\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List")
+			runPowerShell("Start-Process explorer shell:RecycleBinFolder")
 		}
 
-	case "Open Microsoft Office Temp Files":
+	case "Open Office Temp Files":
 		if isMac {
 			path := os.Getenv("HOME") + "/Library/Containers/com.microsoft.Word/Data/Library/Preferences/AutoRecovery"
 			streamCommand("open", path)
 		} else {
-			// Check common autorecover path if it exists
-			runPowerShell("Get-ChildItem -Path \"$env:APPDATA\\Microsoft\\Word\\\" -Filter *.asd -Recurse -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table")
+			// Check common autorecover path AND open
+			wordPath := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Word")
+			runPowerShell(fmt.Sprintf("Get-ChildItem -Path '%s' -Filter *.asd -Recurse -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table", wordPath))
+			runPowerShell(fmt.Sprintf("Start-Process explorer '%s'", wordPath))
 		}
 
 	default:
