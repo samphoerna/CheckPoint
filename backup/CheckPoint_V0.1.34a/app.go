@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"net"
 	"path/filepath"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -30,7 +31,7 @@ type App struct {
 // NewApp creates a new App application struct
 func NewApp(version string) *App {
 	return &App{
-		Version: "V.0.1.34c",
+		Version: "V.0.1.34a",
 	}
 }
 
@@ -295,13 +296,6 @@ func (a *App) ExecuteCommand(feature string) string {
 				"Browser Extension":     true,
 				"Antivirus":             true,
 				"Sys_Security_Status":   true,
-				"PORT 21 (FTP)":         true,
-				"PORT 22 (SSH)":         true,
-				"PORT 23 (TELNET)":      true,
-				"PORT 445 (SMB)":        true,
-				"PORT 3389 (RDP)":       true,
-				"BLUETOOTH":             true,
-				"FILE SHARING":          true,
 			}
 
 			if appSystemFeatures[feature] {
@@ -431,56 +425,6 @@ func (a *App) ExecuteCommand(feature string) string {
 			streamCommand("bash", "-c", "open -a 'Google Chrome' chrome://extensions & open -a 'Firefox' about:addons & open -a 'Brave Browser' brave://extensions")
 		}
 
-	// --- REMOTE SERVICES ---
-	case "PORT 21 (FTP)":
-		if isMac {
-			streamCommand("bash", "-c", "netstat -an | grep \".21 \" | grep LISTEN")
-		} else {
-			streamCommand("cmd", "/c", "netstat -ano | findstr :21")
-		}
-
-	case "PORT 22 (SSH)":
-		if isMac {
-			streamCommand("bash", "-c", "netstat -an | grep \".22 \" | grep LISTEN")
-		} else {
-			streamCommand("cmd", "/c", "netstat -ano | findstr :22")
-		}
-
-	case "PORT 23 (TELNET)":
-		if isMac {
-			streamCommand("bash", "-c", "netstat -an | grep \".23 \" | grep LISTEN")
-		} else {
-			streamCommand("cmd", "/c", "netstat -ano | findstr :23")
-		}
-
-	case "PORT 445 (SMB)":
-		if isMac {
-			streamCommand("bash", "-c", "netstat -an | grep \".445 \" | grep LISTEN")
-		} else {
-			streamCommand("cmd", "/c", "netstat -ano | findstr :445")
-		}
-
-	case "PORT 3389 (RDP)":
-		if isMac {
-			streamCommand("bash", "-c", "netstat -an | grep \".3389 \" | grep LISTEN")
-		} else {
-			streamCommand("cmd", "/c", "netstat -ano | findstr :3389")
-		}
-
-	case "BLUETOOTH":
-		if isMac {
-			streamCommand("system_profiler", "SPBluetoothDataType")
-		} else {
-			runPowerShell("Get-PnpDevice -Class Bluetooth")
-		}
-
-	case "FILE SHARING":
-		if isMac {
-			streamCommand("ifconfig", "awdl0")
-		} else {
-			runPowerShell("Get-ItemProperty -Path \"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CDP\" -Name NearShareChannelUserAuthzPolicy")
-		}
-
 	// --- SECURITY & ANTIVIRUS ---
 	case "Antivirus":
 		if isMac {
@@ -496,6 +440,94 @@ func (a *App) ExecuteCommand(feature string) string {
 			runPowerShell("Get-MpComputerStatus | Select-Object AntivirusEnabled,AMServiceEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled | Format-List")
 		}
 
+	// --- MALWARE / ANTI VIRUS ---
+	case "Security Status":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Checking Security Status...\n=====================================", feature))
+
+			// 3. Gatekeeper status
+			emitLog("[ Gatekeeper Status ]")
+			streamCommand("spctl", "--status")
+
+			// 4. SIP (System Integrity Protection)
+			emitLog("\n[ System Integrity Protection (SIP) ]")
+			streamCommand("csrutil", "status")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Checking Security Status...\n=====================================", feature))
+
+			// AntivirusEnabled, AMServiceEnabled
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property AntivirusEnabled,AMServiceEnabled,AntispywareEnabled | Format-List")
+
+			// Detect third-party
+			runPowerShell("Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object -Property displayName,productState | Format-List")
+		}
+
+	case "Protection Health":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Checking Protection Health...\n=====================================", feature))
+
+			// 1. XProtect status
+			emitLog("[ XProtect Status ]")
+			streamCommand("bash", "-c", "defaults read /System/Library/CoreServices/XProtect.bundle/Contents/Info.plist CFBundleShortVersionString")
+
+			// 2. MRT (Malware Removal Tool)
+			emitLog("\n[ MRT Status ]")
+			streamCommand("bash", "-c", "if [ -d \"/System/Library/CoreServices/MRT.app\" ]; then defaults read /System/Library/CoreServices/MRT.app/Contents/Info.plist CFBundleShortVersionString; else echo \"MRT not found\"; fi")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Checking Protection Health...\n=====================================", feature))
+
+			// RealTimeProtection, Updates, etc.
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated,QuickScanAge,FullScanAge | Format-List")
+		}
+
+	case "Run Quick Scan":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Persistence Inspection (Passive)\n=====================================", feature))
+
+			// 5. Optional passive inspection
+			emitLog("[INFO] Scanning LaunchAgents and LaunchDaemons for persistence indicators...")
+			emitLog("[ LaunchAgents ]")
+			streamCommand("ls", "-la", "/Library/LaunchAgents")
+			streamCommand("ls", "-la", os.Getenv("HOME")+"/Library/LaunchAgents")
+
+			emitLog("\n[ LaunchDaemons ]")
+			streamCommand("ls", "-la", "/Library/LaunchDaemons")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Initiating Quick Scan...\n=====================================", feature))
+
+			emitLog("[WARN] This will start a Windows Defender Quick Scan.")
+			// Trigger scan and stream output (Note: Start-MpScan might output to host if not job)
+			runPowerShell("Start-MpScan -ScanType QuickScan | Out-String")
+		}
+
+	// --- REMOTE SERVICES ---
+	case "Check active network service ports":
+		emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking Ports...\n=====================================", feature))
+		ports := map[string]string{
+			"21":   "FTP",
+			"22":   "SSH",
+			"445":  "SMB",
+			"3389": "RDP",
+		}
+
+		found := false
+		for port, name := range ports {
+			timeout := 500 * time.Millisecond
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, timeout)
+			status := "CLOSED"
+			if err == nil {
+				conn.Close()
+				status = "OPEN"
+				found = true
+			}
+			emitLog(fmt.Sprintf("[%s] Port %s (%s)", status, port, name))
+		}
+		if !found {
+			emitLog("[INFO] No active target services found locally.")
+		}
 	// --- CLEAN FILES ---
 	case "Run Full Cleanup":
 		a.performFullCleanup()
@@ -719,138 +751,6 @@ if ($status.RealTimeProtectionEnabled) {
 			return ComplianceResult{
 				Compliant:  compliant,
 				RepairText: "Open Windows Security > Virus & Threat Protection > Manage Settings",
-			}
-		}
-
-	// --- REMOTE SERVICES ---
-	case "PORT 21 (FTP)":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if lsof -iTCP:21 -sTCP:LISTEN -nP >/dev/null 2>&1; then echo true; else echo false; fi")
-			// Active -> Non-compliant
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo launchctl unload -w /System/Library/LaunchDaemons/ftp.plist",
-			}
-		} else {
-			script := `if (Get-NetTCPConnection -State Listen -LocalPort 21 -ErrorAction SilentlyContinue) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Stop-Service ftpsvc -Force\nSet-Service ftpsvc -StartupType Disabled",
-			}
-		}
-
-	case "PORT 22 (SSH)":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if lsof -iTCP:22 -sTCP:LISTEN -nP >/dev/null 2>&1; then echo true; else echo false; fi")
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo systemsetup -setremotelogin off",
-			}
-		} else {
-			script := `if (Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Stop-Service sshd\nSet-Service sshd -StartupType Disabled",
-			}
-		}
-
-	case "PORT 23 (TELNET)":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if lsof -iTCP:23 -sTCP:LISTEN -nP >/dev/null 2>&1; then echo true; else echo false; fi")
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo launchctl unload -w /System/Library/LaunchDaemons/telnet.plist",
-			}
-		} else {
-			script := `if (Get-NetTCPConnection -State Listen -LocalPort 23 -ErrorAction SilentlyContinue) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Stop-Service TlntSvr\nSet-Service TlntSvr -StartupType Disabled",
-			}
-		}
-
-	case "PORT 445 (SMB)":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if lsof -iTCP:445 -sTCP:LISTEN -nP >/dev/null 2>&1; then echo true; else echo false; fi")
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist",
-			}
-		} else {
-			script := `if (Get-NetTCPConnection -State Listen -LocalPort 445 -ErrorAction SilentlyContinue) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Stop-Service lanmanserver\nSet-Service lanmanserver -StartupType Disabled",
-			}
-		}
-
-	case "PORT 3389 (RDP)":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if lsof -iTCP:3389 -sTCP:LISTEN -nP >/dev/null 2>&1; then echo true; else echo false; fi")
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate",
-			}
-		} else {
-			script := `if (Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Stop-Service TermService",
-			}
-		}
-
-	case "BLUETOOTH":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if system_profiler SPBluetoothDataType | grep -q \"State: On\"; then echo true; else echo false; fi")
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0\nsudo killall -HUP bluetoothd",
-			}
-		} else {
-			script := `
-$bt = Get-PnpDevice -Class Bluetooth | Where-Object {$_.Status -eq "OK"}
-if ($bt) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Disable-PnpDevice -Class Bluetooth -Confirm:$false",
-			}
-		}
-
-	case "FILE SHARING":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if ifconfig awdl0 | grep -q \"status: active\"; then echo true; else echo false; fi")
-			compliant := out == "false"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo ifconfig awdl0 down",
-			}
-		} else {
-			script := `
-$share = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\CDP" -Name NearShareChannelUserAuthzPolicy -ErrorAction SilentlyContinue
-if ($share.NearShareChannelUserAuthzPolicy -gt 0) { $true } else { $false }`
-			out := runSilentPowerShell(script)
-			compliant := out == "False"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Set-ItemProperty -Path \"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CDP\" -Name NearShareChannelUserAuthzPolicy -Value 0",
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"net"
 	"path/filepath"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -30,7 +31,7 @@ type App struct {
 // NewApp creates a new App application struct
 func NewApp(version string) *App {
 	return &App{
-		Version: "V.0.1.34c",
+		Version: "V.0.1.34b",
 	}
 }
 
@@ -496,6 +497,94 @@ func (a *App) ExecuteCommand(feature string) string {
 			runPowerShell("Get-MpComputerStatus | Select-Object AntivirusEnabled,AMServiceEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled | Format-List")
 		}
 
+	// --- MALWARE / ANTI VIRUS ---
+	case "Security Status":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Checking Security Status...\n=====================================", feature))
+
+			// 3. Gatekeeper status
+			emitLog("[ Gatekeeper Status ]")
+			streamCommand("spctl", "--status")
+
+			// 4. SIP (System Integrity Protection)
+			emitLog("\n[ System Integrity Protection (SIP) ]")
+			streamCommand("csrutil", "status")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Checking Security Status...\n=====================================", feature))
+
+			// AntivirusEnabled, AMServiceEnabled
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property AntivirusEnabled,AMServiceEnabled,AntispywareEnabled | Format-List")
+
+			// Detect third-party
+			runPowerShell("Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object -Property displayName,productState | Format-List")
+		}
+
+	case "Protection Health":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Checking Protection Health...\n=====================================", feature))
+
+			// 1. XProtect status
+			emitLog("[ XProtect Status ]")
+			streamCommand("bash", "-c", "defaults read /System/Library/CoreServices/XProtect.bundle/Contents/Info.plist CFBundleShortVersionString")
+
+			// 2. MRT (Malware Removal Tool)
+			emitLog("\n[ MRT Status ]")
+			streamCommand("bash", "-c", "if [ -d \"/System/Library/CoreServices/MRT.app\" ]; then defaults read /System/Library/CoreServices/MRT.app/Contents/Info.plist CFBundleShortVersionString; else echo \"MRT not found\"; fi")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Checking Protection Health...\n=====================================", feature))
+
+			// RealTimeProtection, Updates, etc.
+			runPowerShell("Get-MpComputerStatus | Select-Object -Property RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated,QuickScanAge,FullScanAge | Format-List")
+		}
+
+	case "Run Quick Scan":
+		if isMac {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : macOS\nStatus  : Persistence Inspection (Passive)\n=====================================", feature))
+
+			// 5. Optional passive inspection
+			emitLog("[INFO] Scanning LaunchAgents and LaunchDaemons for persistence indicators...")
+			emitLog("[ LaunchAgents ]")
+			streamCommand("ls", "-la", "/Library/LaunchAgents")
+			streamCommand("ls", "-la", os.Getenv("HOME")+"/Library/LaunchAgents")
+
+			emitLog("\n[ LaunchDaemons ]")
+			streamCommand("ls", "-la", "/Library/LaunchDaemons")
+
+		} else {
+			emitLog(fmt.Sprintf("=====================================\n[ %s ]\nOS      : Windows\nEngine  : Microsoft Defender\nStatus  : Initiating Quick Scan...\n=====================================", feature))
+
+			emitLog("[WARN] This will start a Windows Defender Quick Scan.")
+			// Trigger scan and stream output (Note: Start-MpScan might output to host if not job)
+			runPowerShell("Start-MpScan -ScanType QuickScan | Out-String")
+		}
+
+	// --- REMOTE SERVICES ---
+	case "Check active network service ports":
+		emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking Ports...\n=====================================", feature))
+		ports := map[string]string{
+			"21":   "FTP",
+			"22":   "SSH",
+			"445":  "SMB",
+			"3389": "RDP",
+		}
+
+		found := false
+		for port, name := range ports {
+			timeout := 500 * time.Millisecond
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, timeout)
+			status := "CLOSED"
+			if err == nil {
+				conn.Close()
+				status = "OPEN"
+				found = true
+			}
+			emitLog(fmt.Sprintf("[%s] Port %s (%s)", status, port, name))
+		}
+		if !found {
+			emitLog("[INFO] No active target services found locally.")
+		}
 	// --- CLEAN FILES ---
 	case "Run Full Cleanup":
 		a.performFullCleanup()

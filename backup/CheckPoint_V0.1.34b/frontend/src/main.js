@@ -37,6 +37,16 @@ const categories = [
         ]
     },
     {
+        id: "malware_antivirus",
+        title: "Malware / Anti Virus",
+        icon: "🛡️",
+        tools: [
+            "Security Status",
+            "Protection Health",
+            "Run Quick Scan"
+        ]
+    },
+    {
         id: "remote_services",
         title: "Remote Services",
         icon: "🔗",
@@ -62,34 +72,6 @@ const categories = [
         ]
     }
 ];
-
-// Calculate scores state array
-let complianceScores = {};
-
-// Helper to update the score display on the UI
-window.updateGlobalScore = function() {
-    let totalPoints = Object.values(complianceScores).reduce((sum, val) => sum + val, 0);
-    let percentage = Math.round((totalPoints / 22) * 100);
-    
-    let statusText = "WORSE";
-    let color = "#FF453A"; // default RED
-
-    if (totalPoints >= 18) {
-        statusText = "PASS";
-        color = "#34C759"; // GREEN
-    } else if (totalPoints >= 15) {
-        statusText = "OK";
-        color = "#FFD60A"; // YELLOW
-    } else if (totalPoints >= 12) {
-        statusText = "BAD";
-        color = "#FF9F0A"; // ORANGE
-    }
-
-    const scoreDisplay = document.getElementById('global-score-display');
-    if (scoreDisplay) {
-        scoreDisplay.innerHTML = `Compliance Score: ${percentage}%  |  <span style="color:${color}; font-weight:bold;">${statusText}</span>`;
-    }
-};
 
 // References
 const runtime = window.runtime;
@@ -174,43 +156,6 @@ function init() {
             
             // To allow the repair text to sit on a new line within the flex row
             row.style.flexWrap = 'wrap';
-
-            // Insert Manual Validation Buttons if category is App/System
-            if (cat.id === "application_system") {
-                const evalGroup = document.createElement("div");
-                evalGroup.className = "manual-eval-btn-group";
-                evalGroup.style.display = "flex";
-                evalGroup.style.gap = "4px";
-                evalGroup.style.width = "100%";
-                evalGroup.style.marginTop = "8px";
-                evalGroup.innerHTML = `
-                    <button class="run-btn manual-pass" id="pass-${toolId}" style="background:#555; color:white; flex: 1; border: 1px solid transparent;">PASS</button>
-                    <button class="run-btn manual-fail" id="fail-${toolId}" style="background:#555; color:white; flex: 1; border: 1px solid transparent;">FAIL</button>
-                `;
-                row.appendChild(evalGroup);
-
-                // Handlers for manual evaluation
-                const passBtn = evalGroup.querySelector(`#pass-${toolId}`);
-                const failBtn = evalGroup.querySelector(`#fail-${toolId}`);
-                
-                passBtn.onclick = () => {
-                    complianceScores[toolName] = 1;
-                    passBtn.style.background = "#34C759";
-                    passBtn.style.border = "2px solid white";
-                    failBtn.style.background = "#555";
-                    failBtn.style.border = "1px solid transparent";
-                    window.updateGlobalScore();
-                };
-                
-                failBtn.onclick = () => {
-                    complianceScores[toolName] = 0;
-                    failBtn.style.background = "#FF453A";
-                    failBtn.style.border = "2px solid white";
-                    passBtn.style.background = "#555";
-                    passBtn.style.border = "1px solid transparent";
-                    window.updateGlobalScore();
-                };
-            }
 
             body.appendChild(row);
 
@@ -331,10 +276,6 @@ function handleDone(featureName) {
                 const toolId = featureName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
                 const resetBtn = document.getElementById(`reset-${toolId}`);
                 const repairDiv = document.getElementById(`repair-${toolId}`);
-
-                // Update scoring matrix
-                complianceScores[featureName] = result.compliant ? 1 : 0;
-                window.updateGlobalScore();
                 
                 if (!result.compliant) {
                     if (repairDiv && result.repairText) {
