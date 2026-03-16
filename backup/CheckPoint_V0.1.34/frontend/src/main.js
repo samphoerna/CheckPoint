@@ -28,15 +28,6 @@ const categories = [
         ]
     },
     {
-        id: "security_antivirus",
-        title: "Security & Antivirus",
-        icon: "🔐",
-        tools: [
-            "Antivirus",
-            "Security Status"
-        ]
-    },
-    {
         id: "malware_antivirus",
         title: "Malware / Anti Virus",
         icon: "🛡️",
@@ -156,16 +147,13 @@ function init() {
 
             body.appendChild(row);
 
-            // Backend alias for duplicate feature names
-            const backendFeatureName = (cat.id === "security_antivirus" && toolName === "Security Status") ? "Sys_Security_Status" : toolName;
-
             // Bind State
             const btn = row.querySelector(`#btn-${toolId}`);
-            btn.onclick = () => runTool(backendFeatureName, btn);
+            btn.onclick = () => runTool(toolName, btn);
             
             const resetBtn = row.querySelector(`#reset-${toolId}`);
             resetBtn.onclick = () => {
-                const ctrl = toolControls[backendFeatureName];
+                const ctrl = toolControls[toolName];
                 ctrl.state = 'idle';
                 ctrl.button.textContent = 'Run';
                 ctrl.button.classList.remove('running', 'done');
@@ -179,7 +167,7 @@ function init() {
                 }
             };
 
-            toolControls[backendFeatureName] = { button: btn, state: 'idle' };
+            toolControls[toolName] = { button: btn, state: 'idle' };
         });
 
         block.appendChild(body);
@@ -251,17 +239,15 @@ function handleDone(featureName) {
         ctrl.button.disabled = true;
 
         // Run compliance check for specific Network tools if applicable
-        const complianceFeatures = [
+        const networkComplianceFeatures = [
             "Internet Connectivity",
             "Public IP Check",
             "VPN Connection",
             "Firewall",
-            "Proxy State",
-            "Antivirus",
-            "Security Status"
+            "Proxy State"
         ];
         
-        if (complianceFeatures.includes(featureName) && window.go && window.go.main && window.go.main.App && window.go.main.App.CheckNetworkCompliance) {
+        if (networkComplianceFeatures.includes(featureName) && window.go && window.go.main && window.go.main.App && window.go.main.App.CheckNetworkCompliance) {
             window.go.main.App.CheckNetworkCompliance(featureName).then(result => {
                 const toolId = featureName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
                 const resetBtn = document.getElementById(`reset-${toolId}`);

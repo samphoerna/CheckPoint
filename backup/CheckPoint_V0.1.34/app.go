@@ -31,7 +31,7 @@ type App struct {
 // NewApp creates a new App application struct
 func NewApp(version string) *App {
 	return &App{
-		Version: "V.0.1.34a",
+		Version: "V.0.1.34",
 	}
 }
 
@@ -294,8 +294,6 @@ func (a *App) ExecuteCommand(feature string) string {
 				"Startup Services":      true,
 				"Remote Access Setting": true,
 				"Browser Extension":     true,
-				"Antivirus":             true,
-				"Sys_Security_Status":   true,
 			}
 
 			if appSystemFeatures[feature] {
@@ -425,21 +423,7 @@ func (a *App) ExecuteCommand(feature string) string {
 			streamCommand("bash", "-c", "open -a 'Google Chrome' chrome://extensions & open -a 'Firefox' about:addons & open -a 'Brave Browser' brave://extensions")
 		}
 
-	// --- SECURITY & ANTIVIRUS ---
-	case "Antivirus":
-		if isMac {
-			streamCommand("bash", "-c", "system_profiler SPInstallHistoryDataType | grep -i xprotect")
-		} else {
-			runPowerShell("Get-CimInstance -Namespace root\\SecurityCenter2 -ClassName AntivirusProduct | Select-Object displayName, productState")
-		}
-
-	case "Sys_Security_Status":
-		if isMac {
-			streamCommand("bash", "-c", "csrutil status && spctl --status")
-		} else {
-			runPowerShell("Get-MpComputerStatus | Select-Object AntivirusEnabled,AMServiceEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled | Format-List")
-		}
-
+	// --- MALWARE / ANTI VIRUS ---
 	// --- MALWARE / ANTI VIRUS ---
 	case "Security Status":
 		if isMac {
@@ -701,56 +685,6 @@ if ($proxy -and $proxy.ProxyEnable -eq 1) { $true } else { $false }`
 			return ComplianceResult{
 				Compliant:  compliant,
 				RepairText: "Set-ItemProperty -Path \"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\" -Name ProxyEnable -Value 0",
-			}
-		}
-
-	case "Antivirus":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "if [ -f \"/System/Library/CoreServices/XProtect.bundle/Contents/Resources/XProtect.meta.plist\" ]; then echo true; else echo false; fi")
-			compliant := out == "true"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo spctl --master-enable",
-			}
-		} else {
-			script := `
-$av = Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntivirusProduct -ErrorAction SilentlyContinue
-
-if ($av) {
-    $true
-} else {
-    $false
-}`
-			out := runSilentPowerShell(script)
-			compliant := out == "True"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Set-MpPreference -DisableRealtimeMonitoring $false",
-			}
-		}
-
-	case "Sys_Security_Status":
-		if isMac {
-			out := runSilentCommand("bash", "-c", "sip=$(csrutil status | grep -i enabled); gate=$(spctl --status | grep -i enabled); if [[ -n \"$sip\" && -n \"$gate\" ]]; then echo true; else echo false; fi")
-			compliant := out == "true"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "sudo spctl --master-enable && csrutil enable",
-			}
-		} else {
-			script := `
-$status = Get-MpComputerStatus
-
-if ($status.RealTimeProtectionEnabled) {
-    $true
-} else {
-    $false
-}`
-			out := runSilentPowerShell(script)
-			compliant := out == "True"
-			return ComplianceResult{
-				Compliant:  compliant,
-				RepairText: "Open Windows Security > Virus & Threat Protection > Manage Settings",
 			}
 		}
 	}
