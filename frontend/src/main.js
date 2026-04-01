@@ -79,7 +79,7 @@ window.updateGlobalScore = function() {
         color = "#34C759"; // GREEN
     } else if (totalPoints >= 15) {
         statusText = "OK";
-        color = "#FFD60A"; // YELLOW
+        color = "#007AFF"; // BLUE
     } else if (totalPoints >= 12) {
         statusText = "BAD";
         color = "#FF9F0A"; // ORANGE
@@ -87,7 +87,8 @@ window.updateGlobalScore = function() {
 
     const scoreDisplay = document.getElementById('global-score-display');
     if (scoreDisplay) {
-        scoreDisplay.innerHTML = `Compliance Score: ${percentage}%  |  <span style="color:${color}; font-weight:bold;">${statusText}</span>`;
+        scoreDisplay.className = "";
+        scoreDisplay.innerHTML = `Compliance Score: <span style="color:${color}">${percentage}%</span> <span style="color:#D1D1D6; font-weight: 400;">|</span> <span style="color:${color}">${statusText}</span>`;
     }
 };
 
@@ -161,13 +162,27 @@ function init() {
             // Clean ID for tool
             const toolId = toolName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
 
+            let manualBtnsHTML = '';
+            let btnGroupStyle = "display: flex; gap: 4px; align-items: center;";
+            
+            if (cat.id === "application_system") {
+                btnGroupStyle = "display: flex; flex-direction: column; gap: 4px; width: 70px;";
+                manualBtnsHTML = `
+                    <div style="display: flex; gap: 4px; width: 100%;">
+                        <button class="eval-btn eval-pass" id="pass-${toolId}" style="flex: 1; min-width: 0;">PASS</button>
+                        <button class="eval-btn eval-fail" id="fail-${toolId}" style="flex: 1; min-width: 0;">FAIL</button>
+                    </div>
+                `;
+            }
+
             row.innerHTML = `
                 <div class="tool-info" style="flex: 1;">
                     <div class="tool-name">${toolName}</div>
                 </div>
-                <div class="btn-group" style="display: flex; gap: 4px;">
-                    <button class="run-btn reset-tool-btn" id="reset-${toolId}" style="display: none; background: #FF453A; color: white;">Reset</button>
-                    <button class="run-btn" id="btn-${toolId}">Run</button>
+                <div class="btn-group" style="${btnGroupStyle}">
+                    <button class="run-btn reset-tool-btn" id="reset-${toolId}" style="display: none; background: #FF453A; color: white; width: 100%;">Reset</button>
+                    <button class="run-btn" id="btn-${toolId}" style="${cat.id === 'application_system' ? 'width: 100%;' : ''}">Run</button>
+                    ${manualBtnsHTML}
                 </div>
                 <div class="repair-text" id="repair-${toolId}" style="display: none; width: 100%; color: #FF453A; font-size: 0.85em; margin-top: 8px; padding-left: 8px; border-left: 2px solid #FF453A;"></div>
             `;
@@ -175,39 +190,22 @@ function init() {
             // To allow the repair text to sit on a new line within the flex row
             row.style.flexWrap = 'wrap';
 
-            // Insert Manual Validation Buttons if category is App/System
+            // Insert Manual Validation Handlers if category is App/System
             if (cat.id === "application_system") {
-                const evalGroup = document.createElement("div");
-                evalGroup.className = "manual-eval-btn-group";
-                evalGroup.style.display = "flex";
-                evalGroup.style.gap = "4px";
-                evalGroup.style.width = "100%";
-                evalGroup.style.marginTop = "8px";
-                evalGroup.innerHTML = `
-                    <button class="run-btn manual-pass" id="pass-${toolId}" style="background:#555; color:white; flex: 1; border: 1px solid transparent;">PASS</button>
-                    <button class="run-btn manual-fail" id="fail-${toolId}" style="background:#555; color:white; flex: 1; border: 1px solid transparent;">FAIL</button>
-                `;
-                row.appendChild(evalGroup);
-
-                // Handlers for manual evaluation
-                const passBtn = evalGroup.querySelector(`#pass-${toolId}`);
-                const failBtn = evalGroup.querySelector(`#fail-${toolId}`);
+                const passBtn = row.querySelector(`#pass-${toolId}`);
+                const failBtn = row.querySelector(`#fail-${toolId}`);
                 
                 passBtn.onclick = () => {
                     complianceScores[toolName] = 1;
-                    passBtn.style.background = "#34C759";
-                    passBtn.style.border = "2px solid white";
-                    failBtn.style.background = "#555";
-                    failBtn.style.border = "1px solid transparent";
+                    passBtn.classList.add('active');
+                    failBtn.classList.remove('active');
                     window.updateGlobalScore();
                 };
                 
                 failBtn.onclick = () => {
                     complianceScores[toolName] = 0;
-                    failBtn.style.background = "#FF453A";
-                    failBtn.style.border = "2px solid white";
-                    passBtn.style.background = "#555";
-                    passBtn.style.border = "1px solid transparent";
+                    failBtn.classList.add('active');
+                    passBtn.classList.remove('active');
                     window.updateGlobalScore();
                 };
             }
@@ -255,6 +253,43 @@ function init() {
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.ExportLogs) {
             window.go.main.App.ExportLogs(logBuffer).catch(err => {
                 appendLog(`[ERROR] Save failed: ${err}`);
+            });
+        }
+        
+        // Save audit JSON for Sync Queue
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveAuditResult) {
+            let totalPoints = Object.values(complianceScores).reduce((sum, val) => sum + val, 0);
+            let percentage = Math.round((totalPoints / 22) * 100);
+            let statusText = "WORSE";
+            if (totalPoints >= 18) statusText = "PASS";
+            else if (totalPoints >= 15) statusText = "OK";
+            else if (totalPoints >= 12) statusText = "BAD";
+
+            const mapKey = (frontendName) => {
+                const mapping = {
+                    "Internet Connectivity": "network",
+                    "Firewall": "firewall",
+                    "VPN Connection": "vpn",
+                    "BLUETOOTH": "bluetooth",
+                    "FILE SHARING": "file_sharing"
+                };
+                return mapping[frontendName] || frontendName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+            };
+
+            let payload = {
+                compliance_score: totalPoints,
+                compliance_percent: percentage,
+                compliance_status: statusText
+            };
+
+            Object.keys(complianceScores).forEach(key => {
+                payload[mapKey(key)] = complianceScores[key] === 1;
+            });
+
+            window.go.main.App.SaveAuditResult(payload).then(() => {
+                appendLog(`[OK] Offline Audit data exported to queue.`);
+            }).catch(err => {
+                appendLog(`[ERROR] Offline Audit save failed: ${err}`);
             });
         }
     };
@@ -376,7 +411,16 @@ function resetAll() {
         if (resetBtn) {
             resetBtn.style.display = 'none';
         }
+
+        const passBtn = document.getElementById(`pass-${toolId}`);
+        if (passBtn) passBtn.classList.remove('active');
+        const failBtn = document.getElementById(`fail-${toolId}`);
+        if (failBtn) failBtn.classList.remove('active');
     });
+
+    // Reset compliance scores
+    complianceScores = {};
+    window.updateGlobalScore();
 
     // Clear logs
     logContainer.innerHTML = '';

@@ -6,6 +6,9 @@
 
 CheckPoint is a secure, offline diagnostic utility designed for IT administrators, SOC analysts, and security engineers. It allows users to run essential system, network, and security checks through a unified, clean interface, eliminating the need to memorize complex terminal commands or manage multiple command prompt windows.
 
+How to Run via Command
+export PATH=$PATH:$(go env GOPATH)/bin && wails dev
+
 ---
 
 ## 📖 Table of Contents

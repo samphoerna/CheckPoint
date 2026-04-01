@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -43,6 +46,8 @@ func (a *App) GetAppVersion() string {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.initFolders()
+	go a.SyncAuditResults()
 }
 
 // ExportLogs opens a save dialog and saves the provided content to a file
@@ -888,4 +893,125 @@ func (a *App) performFullCleanup() {
 
 	emitLog("\n[OK] Cleanup process completed.")
 	wailsRuntime.EventsEmit(a.ctx, "done", "Run Full Cleanup")
+}
+
+// initFolders ensures required directories exist
+func (a *App) initFolders() {
+	baseDir, err := a.getAppBaseDir()
+	if err != nil {
+		fmt.Printf("Error getting base dir: %v\n", err)
+		return
+	}
+
+	dirs := []string{
+		filepath.Join(baseDir, "data"),
+		filepath.Join(baseDir, "data", "audit_queue"),
+		filepath.Join(baseDir, "data", "audit_synced"),
+		filepath.Join(baseDir, "logs"),
+	}
+
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			fmt.Printf("Failed to create dir %s: %v\n", d, err)
+		}
+	}
+}
+
+// CheckInternet checks if internet is available
+func (a *App) CheckInternet() bool {
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+	}
+	resp, err := client.Get("https://google.com")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// SyncAuditResults processes the offline queue
+func (a *App) SyncAuditResults() {
+	if !a.CheckInternet() {
+		return
+	}
+
+	baseDir, err := a.getAppBaseDir()
+	if err != nil {
+		return
+	}
+
+	queueDir := filepath.Join(baseDir, "data", "audit_queue")
+	syncedDir := filepath.Join(baseDir, "data", "audit_synced")
+
+	files, err := os.ReadDir(queueDir)
+	if err != nil {
+		return
+	}
+
+	for _, f := range files {
+		if f.IsDir() || filepath.Ext(f.Name()) != ".json" {
+			continue
+		}
+
+		filePath := filepath.Join(queueDir, f.Name())
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		// Perform HTTP POST
+		url := "https://script.google.com/macros/s/AKfycbymX8A88tzF7NgERlL6eoZ97uO03A_lLhTGBQHPc4fipwHwBw7At9aahBkVpYOMTxgw-w/exec"
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound {
+				// Move to synced
+				newPath := filepath.Join(syncedDir, f.Name())
+				os.Rename(filePath, newPath)
+			}
+		}
+	}
+}
+
+// SaveAuditResult saves the audit data as JSON
+func (a *App) SaveAuditResult(frontendData map[string]interface{}) error {
+	baseDir, err := a.getAppBaseDir()
+	if err != nil {
+		return err
+	}
+
+	queueDir := filepath.Join(baseDir, "data", "audit_queue")
+	
+	// Ensure directory exists just in case
+	os.MkdirAll(queueDir, 0755)
+
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "Unknown"
+	}
+
+	// Add backend info
+	frontendData["hostname"] = hostname
+	frontendData["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
+	frontendData["os"] = runtime.GOOS
+	
+	// Create JSON
+	jsonData, err := json.MarshalIndent(frontendData, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	filename := fmt.Sprintf("audit_%s.json", time.Now().Format("20060102_150405"))
+	filepath := filepath.Join(queueDir, filename)
+
+	return os.WriteFile(filepath, jsonData, 0644)
 }
