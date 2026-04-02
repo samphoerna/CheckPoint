@@ -203,6 +203,14 @@ func (a *App) ExecuteCommand(feature string) string {
 	isMac := runtime.GOOS == "darwin"
 	isWindows := runtime.GOOS == "windows"
 
+	openUI := func(command string, args ...string) {
+		cmd := exec.Command(command, args...)
+		if isWindows {
+			cmd.SysProcAttr = getSysProcAttr()
+		}
+		cmd.Start()
+	}
+
 	// Helper to run command and stream output
 	streamCommand := func(command string, args ...string) {
 		go func() {
@@ -400,15 +408,19 @@ func (a *App) ExecuteCommand(feature string) string {
 
 	case "Task Manager":
 		if isMac {
+			openUI("open", "-a", "Activity Monitor")
 			streamCommand("top", "-l", "1", "-n", "25")
 		} else {
+			openUI("cmd", "/C", "start", "taskmgr")
 			streamCommand("tasklist")
 		}
 
 	case "Installed App":
 		if isMac {
+			openUI("open", "/Applications")
 			streamCommand("system_profiler", "SPApplicationsDataType")
 		} else {
+			openUI("cmd", "/C", "start", "appwiz.cpl")
 			runPowerShell("Get-ItemProperty HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | Select-Object DisplayName, DisplayVersion | Format-Table -AutoSize")
 		}
 
@@ -416,21 +428,27 @@ func (a *App) ExecuteCommand(feature string) string {
 		if isMac {
 			streamCommand("launchctl", "list")
 		} else {
+			openUI("cmd", "/C", "start", "taskmgr", "/startup")
 			runPowerShell("Get-CimInstance Win32_StartupCommand | Select Name, Command, Location | Format-Table -AutoSize")
 		}
 
 	case "Remote Access Setting":
 		if isMac {
+			openUI("open", "/System/Library/PreferencePanes/SharingPref.prefPane")
 			streamCommand("systemsetup", "-getremotelogin")
 		} else {
+			openUI("cmd", "/C", "start", "SystemPropertiesRemote")
 			runPowerShell("Get-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name 'fDenyTSConnections' | Format-List")
 		}
 
 	case "Browser Extension":
 		emitLog(fmt.Sprintf("=====================================\n[ %s ]\nStatus : Checking Extensions...\n=====================================", feature))
 		if isWindows {
+			openUI("cmd", "/C", "start", "chrome://extensions")
+			openUI("cmd", "/C", "start", "edge://extensions")
 			runPowerShell("Get-ChildItem -Path \"$env:LocalAppData\\Google\\Chrome\\User Data\\Default\\Extensions\" -ErrorAction SilentlyContinue | Select-Object Name | Format-Table")
 		} else {
+			openUI("open", "-a", "Google Chrome", "chrome://extensions")
 			streamCommand("bash", "-c", "ls -l ~/Library/Application\\ Support/Google/Chrome/Default/Extensions/ 2>/dev/null || echo 'No Chrome extensions found'")
 		}
 
@@ -508,8 +526,7 @@ func (a *App) ExecuteCommand(feature string) string {
 			streamCommand("open", os.Getenv("TMPDIR"))
 		} else {
 			// Calculate size AND open folder
-			runPowerShell("Get-ChildItem -Path $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List")
-			runPowerShell("Start-Process explorer $env:TEMP")
+			runPowerShell("Get-ChildItem -Path $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List; Start-Process explorer $env:TEMP")
 		}
 
 	case "Open Trash / Recycle Bin":
@@ -517,8 +534,7 @@ func (a *App) ExecuteCommand(feature string) string {
 			streamCommand("open", os.Getenv("HOME")+"/.Trash")
 		} else {
 			// Calculate Recycle Bin size AND open
-			runPowerShell("Get-ChildItem 'C:\\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List")
-			runPowerShell("Start-Process explorer shell:RecycleBinFolder")
+			runPowerShell("Get-ChildItem 'C:\\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object Count, @{Name='Total Size(MB)';Expression={[math]::round($_.Sum/1MB,2)}} | Format-List; Start-Process explorer shell:RecycleBinFolder")
 		}
 
 	case "Open Office Temp Files":
@@ -528,8 +544,7 @@ func (a *App) ExecuteCommand(feature string) string {
 		} else {
 			// Check common autorecover path AND open
 			wordPath := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Word")
-			runPowerShell(fmt.Sprintf("Get-ChildItem -Path '%s' -Filter *.asd -Recurse -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table", wordPath))
-			runPowerShell(fmt.Sprintf("Start-Process explorer '%s'", wordPath))
+			runPowerShell(fmt.Sprintf("Get-ChildItem -Path '%s' -Filter *.asd -Recurse -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime | Format-Table; Start-Process explorer '%s'", wordPath, wordPath))
 		}
 
 	default:
@@ -968,7 +983,7 @@ func (a *App) SyncAuditResults() {
 
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
-		
+
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound {
@@ -988,7 +1003,7 @@ func (a *App) SaveAuditResult(frontendData map[string]interface{}) error {
 	}
 
 	queueDir := filepath.Join(baseDir, "data", "audit_queue")
-	
+
 	// Ensure directory exists just in case
 	os.MkdirAll(queueDir, 0755)
 
@@ -1001,12 +1016,12 @@ func (a *App) SaveAuditResult(frontendData map[string]interface{}) error {
 	frontendData["hostname"] = hostname
 	frontendData["timestamp"] = time.Now().Format("2006-01-02 15:04:05")
 	frontendData["os"] = runtime.GOOS
-	
+
 	// Set model info to arch if not present
 	if _, ok := frontendData["model"]; !ok {
 		frontendData["model"] = runtime.GOARCH
 	}
-	
+
 	// Create JSON
 	jsonData, err := json.MarshalIndent(frontendData, "", "  ")
 	if err != nil {
