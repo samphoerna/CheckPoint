@@ -41,11 +41,11 @@ const categories = [
         title: "Remote Services",
         icon: "🔗",
         tools: [
-            "Port 21",
-            "Port 22",
-            "Port 23",
-            "Port 445",
-            "Port 3389",
+            "FTP Service",
+            "SSH Service",
+            "Telnet Service",
+            "SMB Service",
+            "RDP Service",
             "Bluetooth",
             "File Sharing"
         ]
@@ -66,11 +66,30 @@ const categories = [
 // Calculate scores state array
 let complianceScores = {};
 
+// Display name → backend feature name mapping for Remote Services
+const serviceToBackend = {
+    "FTP Service": "Port 21",
+    "SSH Service": "Port 22",
+    "Telnet Service": "Port 23",
+    "SMB Service": "Port 445",
+    "RDP Service": "Port 3389"
+};
+
 // Helper to update the score display on the UI
-window.updateGlobalScore = function() {
+window.updateGlobalScore = function () {
+    const scoreDisplay = document.getElementById('global-score-display');
+    if (!scoreDisplay) return;
+
+    // If no audit data has been recorded yet, show muted placeholder
+    if (Object.keys(complianceScores).length === 0) {
+        scoreDisplay.className = "score-muted";
+        scoreDisplay.innerHTML = `Compliance Score: <span style="color:#8E8E93">—</span> <span style="color:#D1D1D6; font-weight: 400;">|</span> <span style="color:#8E8E93">N/A</span>`;
+        return;
+    }
+
     let totalPoints = Object.values(complianceScores).reduce((sum, val) => sum + val, 0);
     let percentage = Math.round((totalPoints / 22) * 100);
-    
+
     let statusText = "WORSE";
     let color = "#FF453A"; // default RED
 
@@ -85,11 +104,8 @@ window.updateGlobalScore = function() {
         color = "#FF9F0A"; // ORANGE
     }
 
-    const scoreDisplay = document.getElementById('global-score-display');
-    if (scoreDisplay) {
-        scoreDisplay.className = "";
-        scoreDisplay.innerHTML = `Compliance Score: <span style="color:${color}">${percentage}%</span> <span style="color:#D1D1D6; font-weight: 400;">|</span> <span style="color:${color}">${statusText}</span>`;
-    }
+    scoreDisplay.className = "";
+    scoreDisplay.innerHTML = `Compliance Score: <span style="color:${color}">${percentage}%</span> <span style="color:#D1D1D6; font-weight: 400;">|</span> <span style="color:${color}">${statusText}</span>`;
 };
 
 // References
@@ -164,7 +180,7 @@ function init() {
 
             let manualBtnsHTML = '';
             let btnGroupStyle = "display: flex; gap: 4px; align-items: center;";
-            
+
             if (cat.id === "application_system") {
                 btnGroupStyle = "display: flex; flex-direction: column; gap: 4px; width: 70px;";
                 manualBtnsHTML = `
@@ -186,7 +202,7 @@ function init() {
                 </div>
                 <div class="repair-text" id="repair-${toolId}" style="display: none; width: 100%; color: #FF453A; font-size: 0.85em; margin-top: 8px; padding-left: 8px; border-left: 2px solid #FF453A;"></div>
             `;
-            
+
             // To allow the repair text to sit on a new line within the flex row
             row.style.flexWrap = 'wrap';
 
@@ -194,14 +210,14 @@ function init() {
             if (cat.id === "application_system") {
                 const passBtn = row.querySelector(`#pass-${toolId}`);
                 const failBtn = row.querySelector(`#fail-${toolId}`);
-                
+
                 passBtn.onclick = () => {
                     complianceScores[toolName] = 1;
                     passBtn.classList.add('active');
                     failBtn.classList.remove('active');
                     window.updateGlobalScore();
                 };
-                
+
                 failBtn.onclick = () => {
                     complianceScores[toolName] = 0;
                     failBtn.classList.add('active');
@@ -212,13 +228,18 @@ function init() {
 
             body.appendChild(row);
 
-            // Backend alias for duplicate feature names
-            const backendFeatureName = (cat.id === "security_antivirus" && toolName === "Security Status") ? "Sys_Security_Status" : toolName;
+            // Backend alias for duplicate feature names and service label mapping
+            let backendFeatureName = toolName;
+            if (cat.id === "security_antivirus" && toolName === "Security Status") {
+                backendFeatureName = "Sys_Security_Status";
+            } else if (serviceToBackend[toolName]) {
+                backendFeatureName = serviceToBackend[toolName];
+            }
 
             // Bind State
             const btn = row.querySelector(`#btn-${toolId}`);
             btn.onclick = () => runTool(backendFeatureName, btn);
-            
+
             const resetBtn = row.querySelector(`#reset-${toolId}`);
             resetBtn.onclick = () => {
                 const ctrl = toolControls[backendFeatureName];
@@ -226,7 +247,7 @@ function init() {
                 ctrl.button.textContent = 'Run';
                 ctrl.button.classList.remove('running', 'done');
                 ctrl.button.disabled = false;
-                
+
                 resetBtn.style.display = 'none';
                 const repairDiv = document.getElementById(`repair-${toolId}`);
                 if (repairDiv) {
@@ -252,12 +273,13 @@ function init() {
     exportBtn.onclick = () => {
         let totalPoints = Object.values(complianceScores).reduce((sum, val) => sum + val, 0);
         let percentage = Math.round((totalPoints / 22) * 100);
-        let statusText = "WORSE";
+        let hasData = Object.keys(complianceScores).length > 0;
+        let statusText = hasData ? "WORSE" : "N/A";
         if (totalPoints >= 18) statusText = "PASS";
         else if (totalPoints >= 15) statusText = "OK";
         else if (totalPoints >= 12) statusText = "BAD";
 
-        const scoreHeader = `=====================================\n[ Compliance Score: ${totalPoints}/22 - ${percentage}% - ${statusText} ]\n=====================================\n\n`;
+        const scoreHeader = `=====================================\n[ Compliance Score: ${hasData ? totalPoints + '/22 - ' + percentage + '% - ' + statusText : 'N/A'} ]\n=====================================\n\n`;
         const exportContent = scoreHeader + logBuffer;
 
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.ExportLogs) {
@@ -265,7 +287,7 @@ function init() {
                 appendLog(`[ERROR] Save failed: ${err}`);
             });
         }
-        
+
         // Save audit JSON for Sync Queue
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveAuditResult) {
             const mapKey = (frontendName) => {
@@ -283,6 +305,11 @@ function init() {
                     "Port 23": "port23",
                     "Port 445": "port445",
                     "Port 3389": "port3389",
+                    "FTP Service": "port21",
+                    "SSH Service": "port22",
+                    "Telnet Service": "port23",
+                    "SMB Service": "port445",
+                    "RDP Service": "port3389",
                     "Bluetooth": "bluetooth",
                     "File Sharing": "file_sharing"
                 };
@@ -311,7 +338,7 @@ function init() {
 
             Object.keys(complianceScores).forEach(key => {
                 let jsonKey = mapKey(key);
-                if(jsonKey && payload.hasOwnProperty(jsonKey)) {
+                if (jsonKey && payload.hasOwnProperty(jsonKey)) {
                     payload[jsonKey] = complianceScores[key] === 1;
                 }
             });
@@ -390,7 +417,7 @@ function handleDone(featureName) {
             "Bluetooth",
             "File Sharing"
         ];
-        
+
         if (complianceFeatures.includes(featureName) && window.go && window.go.main && window.go.main.App && window.go.main.App.CheckNetworkCompliance) {
             window.go.main.App.CheckNetworkCompliance(featureName).then(result => {
                 const toolId = featureName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
@@ -400,7 +427,7 @@ function handleDone(featureName) {
                 // Update scoring matrix
                 complianceScores[featureName] = result.compliant ? 1 : 0;
                 window.updateGlobalScore();
-                
+
                 if (!result.compliant) {
                     if (repairDiv && result.repairText) {
                         repairDiv.textContent = `Fix: ${result.repairText}`;
@@ -414,7 +441,7 @@ function handleDone(featureName) {
                 console.error(`Error checking compliance for ${featureName}:`, err);
             });
         }
-        
+
     } else {
         console.warn(`[Frontend] Received done event for unknown feature: ${featureName}`);
     }
@@ -429,14 +456,14 @@ function resetAll() {
         ctrl.button.classList.remove('running', 'done');
         ctrl.button.classList.remove('error'); // If we had error state
         ctrl.button.disabled = false;
-        
+
         const toolId = key.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
         const repairDiv = document.getElementById(`repair-${toolId}`);
         if (repairDiv) {
             repairDiv.style.display = 'none';
             repairDiv.textContent = '';
         }
-        
+
         const resetBtn = document.getElementById(`reset-${toolId}`);
         if (resetBtn) {
             resetBtn.style.display = 'none';
